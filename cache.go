@@ -25,24 +25,26 @@ type Cache interface {
 	Inc(key string, val interface{}) (interface{}, error)
 	Dec(key string, val interface{}) (interface{}, error)
 
-	ItemCount() int           // may include the expired items not cleaned up
-	NotExpiredItemCount() int // expensive
+	TotalItems() int      // may include the expired items not cleaned up
+	TotalValidItems() int // expensive
 }
 
 type cache struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	mtx       sync.RWMutex
-	items     map[string]Item
-	changed   bool
-	w         watcher
-	persister Persister
+	ctx           context.Context
+	cancel        context.CancelFunc
+	mtx           sync.RWMutex
+	persistItems  map[string]Item
+	volatileItems map[string]Item
+	changed       bool
+	w             watcher
+	persister     Persister
 }
 
 func New(ctx context.Context, cleanupInterval, persistInterval time.Duration, persister Persister) (Cache, error) {
 	var c cache
 	c.ctx, c.cancel = context.WithCancel(ctx)
-	c.items = make(map[string]Item)
+	c.persistItems = make(map[string]Item)
+	c.volatileItems = make(map[string]Item)
 	c.changed = false
 	c.w.cleanupInterval = cleanupInterval
 	c.w.persistInterval = persistInterval
@@ -52,7 +54,13 @@ func New(ctx context.Context, cleanupInterval, persistInterval time.Duration, pe
 		if items, err := persister.Load(); err != nil {
 			return nil, err
 		} else {
-			c.items = items
+			for key, item := range items {
+				if item.ExpireAt == gNoExpiration {
+					c.persistItems[key] = item
+				} else {
+					c.volatileItems[key] = item
+				}
+			}
 		}
 	}
 
@@ -69,9 +77,9 @@ func (c *cache) Close() error {
 func (c *cache) cleanup() {
 	c.mtx.Lock()
 	now := time.Now()
-	for key, item := range c.items {
+	for key, item := range c.volatileItems {
 		if now.After(item.ExpireAt) {
-			delete(c.items, key)
+			delete(c.volatileItems, key)
 			c.changed = true
 		}
 	}
@@ -84,37 +92,50 @@ func (c *cache) persist() {
 	}
 
 	items := make(map[string]Item)
-	c.mtx.Lock()
+	c.mtx.RLock()
 	if c.changed {
-		for key, item := range c.items {
+		for key, item := range c.persistItems {
+			items[key] = item
+		}
+
+		for key, item := range c.volatileItems {
 			if !item.expired() {
 				items[key] = item
 			}
 		}
 		c.changed = false
 	}
-	c.mtx.Unlock()
+	c.mtx.RUnlock()
 
 	c.persister.Save(items)
 }
 
 func (c *cache) Exists(key string) bool {
 	c.mtx.RLock()
-	item, exists := c.items[key]
-	c.mtx.RUnlock()
+	defer c.mtx.RUnlock()
 
-	if time.Now().After(item.ExpireAt) {
-		return false
+	_, exists := c.persistItems[key]
+	if exists {
+		return true
 	}
 
-	return exists
+	item, exists := c.volatileItems[key]
+	return exists && !item.expired()
 }
 
 func (c *cache) Get(key string) (interface{}, error) {
-	c.mtx.RLock()
-	item, exists := c.items[key]
-	c.mtx.RUnlock()
+	var item Item
+	var exists bool
 
+	c.mtx.RLock()
+	defer c.mtx.RUnlock()
+
+	item, exists = c.persistItems[key]
+	if exists {
+		return item.Object, nil
+	}
+
+	item, exists = c.volatileItems[key]
 	if !exists || item.expired() {
 		return nil, ErrNotExists
 	}
@@ -124,15 +145,16 @@ func (c *cache) Get(key string) (interface{}, error) {
 
 func (c *cache) GetTTL(key string) (time.Duration, error) {
 	c.mtx.RLock()
-	item, exists := c.items[key]
-	c.mtx.RUnlock()
+	defer c.mtx.RUnlock()
 
-	if !exists {
-		return 0, ErrNotExists
+	item, exists := c.persistItems[key]
+	if exists {
+		return NO_EXPIRATION, nil
 	}
 
-	if item.ExpireAt == gNoExpiration {
-		return NO_EXPIRATION, nil
+	item, exists = c.volatileItems[key]
+	if !exists {
+		return 0, ErrNotExists
 	}
 
 	ttl := time.Until(item.ExpireAt)
@@ -145,260 +167,269 @@ func (c *cache) GetTTL(key string) (time.Duration, error) {
 
 func (c *cache) Set(key string, val interface{}, ttl time.Duration) {
 	var expireAt time.Time
-	if ttl == 0 {
+	if ttl == NO_EXPIRATION {
 		expireAt = gNoExpiration
 	} else {
 		expireAt = time.Now().Add(ttl)
 	}
 
 	c.mtx.Lock()
-	c.items[key] = Item{
-		Object:   val,
-		ExpireAt: expireAt,
+	if ttl == NO_EXPIRATION {
+		delete(c.volatileItems, key)
+		c.persistItems[key] = Item{
+			Object:   val,
+			ExpireAt: expireAt,
+		}
+	} else {
+		delete(c.persistItems, key)
+		c.volatileItems[key] = Item{
+			Object:   val,
+			ExpireAt: expireAt,
+		}
 	}
 	c.changed = true
-
-	// do not use defer because it adds ~200 ns
 	c.mtx.Unlock()
 }
 
 func (c *cache) Del(key string) {
 	c.mtx.Lock()
-	if _, existed := c.items[key]; existed {
-		delete(c.items, key)
+	if _, existed := c.persistItems[key]; existed {
+		delete(c.persistItems, key)
+		c.changed = true
+	} else if _, existed := c.volatileItems[key]; existed {
+		delete(c.volatileItems, key)
 		c.changed = true
 	}
 	c.mtx.Unlock()
 }
 
 func (c *cache) Inc(key string, val interface{}) (interface{}, error) {
+	var item Item
+	var exists bool
+
 	c.mtx.Lock()
-	item, exists := c.items[key]
-	if !exists || item.expired() {
-		c.mtx.Unlock()
-		return nil, ErrNotExists
+	defer c.mtx.Unlock()
+
+	item, exists = c.persistItems[key]
+	if !exists {
+		item, exists = c.volatileItems[key]
+		if !exists || item.expired() {
+			return nil, ErrNotExists
+		}
 	}
 
 	switch item.Object.(type) {
 	case int:
 		if v, ok := val.(int); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(int) + v
 		}
 	case int8:
 		if v, ok := val.(int8); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(int8) + v
 		}
 	case int16:
 		if v, ok := val.(int16); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(int16) + v
 		}
 	case int32:
 		if v, ok := val.(int32); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(int32) + v
 		}
 	case int64:
 		if v, ok := val.(int64); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(int64) + v
 		}
 	case uint:
 		if v, ok := val.(uint); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(uint) + v
 		}
 	case uint8:
 		if v, ok := val.(uint8); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(uint8) + v
 		}
 	case uint16:
 		if v, ok := val.(uint16); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(uint16) + v
 		}
 	case uint32:
 		if v, ok := val.(uint32); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(uint32) + v
 		}
 	case uint64:
 		if v, ok := val.(uint64); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(uint64) + v
 		}
 	case float32:
 		if v, ok := val.(float32); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(float32) + v
 		}
 	case float64:
 		if v, ok := val.(float64); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(float64) + v
 		}
 	default:
-		c.mtx.Unlock()
 		return nil, ErrInvalidType
 	}
 
-	c.items[key] = item
+	if item.ExpireAt == gNoExpiration {
+		c.persistItems[key] = item
+	} else {
+		c.volatileItems[key] = item
+	}
+
 	c.changed = true
-	c.mtx.Unlock()
 
 	return item.Object, nil
 }
 
 func (c *cache) Dec(key string, val interface{}) (interface{}, error) {
+	var item Item
+	var exists bool
+
 	c.mtx.Lock()
-	item, exists := c.items[key]
-	if !exists || item.expired() {
-		c.mtx.Unlock()
-		return 0, ErrNotExists
+	defer c.mtx.Unlock()
+
+	item, exists = c.persistItems[key]
+	if !exists {
+		item, exists = c.volatileItems[key]
+		if !exists || item.expired() {
+			return nil, ErrNotExists
+		}
 	}
 
 	switch item.Object.(type) {
 	case int:
 		if v, ok := val.(int); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(int) - v
 		}
 	case int8:
 		if v, ok := val.(int8); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(int8) - v
 		}
 	case int16:
 		if v, ok := val.(int16); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(int16) - v
 		}
 	case int32:
 		if v, ok := val.(int32); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(int32) - v
 		}
 	case int64:
 		if v, ok := val.(int64); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(int64) - v
 		}
 	case uint:
 		if v, ok := val.(uint); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(uint) - v
 		}
 	case uint8:
 		if v, ok := val.(uint8); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(uint8) - v
 		}
 	case uint16:
 		if v, ok := val.(uint16); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(uint16) - v
 		}
 	case uint32:
 		if v, ok := val.(uint32); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(uint32) - v
 		}
 	case uint64:
 		if v, ok := val.(uint64); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(uint64) - v
 		}
 	case float32:
 		if v, ok := val.(float32); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(float32) - v
 		}
 	case float64:
 		if v, ok := val.(float64); !ok {
-			c.mtx.Unlock()
 			return nil, ErrInvalidType
 		} else {
 			item.Object = item.Object.(float64) - v
 		}
 	default:
-		c.mtx.Unlock()
 		return nil, ErrInvalidType
 	}
 
-	c.items[key] = item
+	if item.ExpireAt == gNoExpiration {
+		c.persistItems[key] = item
+	} else {
+		c.volatileItems[key] = item
+	}
+
 	c.changed = true
-	c.mtx.Unlock()
 
 	return item.Object, nil
 }
 
-func (c *cache) ItemCount() int {
+func (c *cache) TotalItems() int {
 	c.mtx.RLock()
-	n := len(c.items)
+	n1 := len(c.persistItems)
+	n2 := len(c.volatileItems)
 	c.mtx.RUnlock()
 
-	return n
+	return n1 + n2
 }
 
-func (c *cache) NotExpiredItemCount() int {
+func (c *cache) TotalValidItems() int {
 	c.mtx.RLock()
+	n1 := len(c.persistItems)
+
 	now := time.Now()
-	var n = 0
-	for _, item := range c.items {
+	n2 := 0
+	for _, item := range c.volatileItems {
 		if now.Before(item.ExpireAt) {
-			n++
+			n2++
 		}
 	}
 	c.mtx.RUnlock()
 
-	return n
+	return n1 + n2
 }

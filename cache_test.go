@@ -47,16 +47,37 @@ func TestPersist(t *testing.T) {
 		return
 	}
 
-	k1 := "key1"
-	v1 := "val1"
-	Set(c, k1, v1, time.Second*100)
-	val, err := Get[string](c, k1)
+	Set(c, "k1", "v1", time.Second*100)
+	Set(c, "k2", true, time.Second*100)
+	Set(c, "k3", int8(-1), NO_EXPIRATION)
+	Set(c, "k4", uint8(1), NO_EXPIRATION)
+	Set(c, "k5", int(-2), NO_EXPIRATION)
+	Set(c, "k6", uint(2), NO_EXPIRATION)
+	Set(c, "k7", float32(1.0), NO_EXPIRATION)
+	Set(c, "k8", []string{"a", "b"}, NO_EXPIRATION)
+	Set(c, "k9", []int{1, 2, 3}, time.Second*100)
+
+	totalItems := TotalItems(c)
+	if totalItems != 9 {
+		t.Error("invalid number of items")
+		return
+	}
+
+	v1, err := Get[string](c, "k1")
 	if err != nil {
 		t.Error(err)
 		return
+	} else if v1 != "v1" {
+		t.Errorf("value error. key: k1, expect: v1, got: %v", v1)
+		return
 	}
-	if val != v1 {
-		t.Errorf("invalid get val: %v -> %v", v1, val)
+
+	v3, err := Get[int8](c, "k3")
+	if err != nil {
+		t.Error(err)
+		return
+	} else if v3 != -1 {
+		t.Errorf("value error. key: k3, expect: 1, got: %v", v3)
 		return
 	}
 
@@ -67,13 +88,11 @@ func TestPersist(t *testing.T) {
 		return
 	}
 
-	v2, err := Get[string](c2, k1)
+	v2, err := Get[string](c2, "k1")
 	if err != nil {
 		t.Error(err)
 		return
-	}
-
-	if v2 != v1 {
+	} else if v2 != "v1" {
 		t.Errorf("invalid get val: %v -> %v", v1, v2)
 		return
 	}

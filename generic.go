@@ -23,17 +23,17 @@ func Exists(c Cache, key string) bool {
 	return c.Exists(key)
 }
 
-func Get[T ValType](c Cache, key string) (t T, retErr error) {
+func Get[T ValType](c Cache, key string) (T, error) {
+	var retV T
+
 	val, err := c.Get(key)
 	if err != nil {
-		retErr = err
-		return
+		return retV, err
 	}
 
 	v, ok := val.(T)
 	if !ok {
-		retErr = ErrInvalidType
-		return
+		return retV, ErrInvalidType
 	}
 
 	return v, nil
@@ -51,60 +51,80 @@ func Del(c Cache, key string) {
 	c.Del(key)
 }
 
-func Inc[T NumType](c Cache, key string, val T) (retVal T, retErr error) {
+func Inc[T NumType](c Cache, key string, val T) (T, error) {
+	var retVal T
+	var item Item
+	var exists bool
 	cc := c.(*cache)
+
 	cc.mtx.Lock()
-	item, exists := cc.items[key]
-	if !exists || item.expired() {
-		cc.mtx.Unlock()
-		retErr = ErrNotExists
-		return
+	defer cc.mtx.Unlock()
+
+	item, exists = cc.persistItems[key]
+	if !exists {
+		item, exists = cc.volatileItems[key]
+		if !exists || item.expired() {
+			return retVal, ErrNotExists
+		}
 	}
 
 	oldV, ok := item.Object.(T)
 	if !ok {
-		cc.mtx.Unlock()
-		retErr = ErrInvalidType
-		return
+		return retVal, ErrInvalidType
 	}
 
 	newV := oldV + val
 	item.Object = newV
-	cc.items[key] = item
-	cc.mtx.Unlock()
+
+	if item.ExpireAt == gNoExpiration {
+		cc.persistItems[key] = item
+	} else {
+		cc.volatileItems[key] = item
+	}
+	cc.changed = true
 
 	return newV, nil
 }
 
-func Dec[T NumType](c Cache, key string, val T) (retVal T, retErr error) {
+func Dec[T NumType](c Cache, key string, val T) (T, error) {
+	var retVal T
+	var item Item
+	var exists bool
 	cc := c.(*cache)
+
 	cc.mtx.Lock()
-	item, exists := cc.items[key]
-	if !exists || item.expired() {
-		cc.mtx.Unlock()
-		retErr = ErrNotExists
-		return
+	defer cc.mtx.Unlock()
+
+	item, exists = cc.persistItems[key]
+	if !exists {
+		item, exists = cc.volatileItems[key]
+		if !exists || item.expired() {
+			return retVal, ErrNotExists
+		}
 	}
 
 	oldV, ok := item.Object.(T)
 	if !ok {
-		cc.mtx.Unlock()
-		retErr = ErrInvalidType
-		return
+		return retVal, ErrInvalidType
 	}
 
 	newV := oldV - val
 	item.Object = newV
-	cc.items[key] = item
-	cc.mtx.Unlock()
+
+	if item.ExpireAt == gNoExpiration {
+		cc.persistItems[key] = item
+	} else {
+		cc.volatileItems[key] = item
+	}
+	cc.changed = true
 
 	return newV, nil
 }
 
-func ItemCount(c Cache) int {
-	return c.ItemCount()
+func TotalItems(c Cache) int {
+	return c.TotalItems()
 }
 
-func NotExpiredItemCount(c Cache) int {
-	return c.NotExpiredItemCount()
+func TotalValidItems(c Cache) int {
+	return c.TotalValidItems()
 }
