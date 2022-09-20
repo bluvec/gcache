@@ -14,20 +14,33 @@ func (w *watcher) Run(ctx context.Context, c *cache) {
 	cleanupTicker := time.NewTicker(w.cleanupInterval)
 	defer cleanupTicker.Stop()
 
-	persistTicker := time.NewTicker(w.persistInterval)
-	defer persistTicker.Stop()
+	if c.persister == nil {
+		for {
+			select {
+			case <-ctx.Done():
+				c.persist()
+				return
 
-	for {
-		select {
-		case <-ctx.Done():
-			c.persist()
-			return
+			case <-cleanupTicker.C:
+				c.cleanup()
+			}
+		}
+	} else {
+		persistTicker := time.NewTicker(w.persistInterval)
+		defer persistTicker.Stop()
 
-		case <-cleanupTicker.C:
-			c.cleanup()
+		for {
+			select {
+			case <-ctx.Done():
+				c.persist()
+				return
 
-		case <-persistTicker.C:
-			c.persist()
+			case <-cleanupTicker.C:
+				c.cleanup()
+
+			case <-persistTicker.C:
+				c.persist()
+			}
 		}
 	}
 }

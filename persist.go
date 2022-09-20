@@ -2,6 +2,8 @@ package gcache
 
 import (
 	"encoding/gob"
+	"errors"
+	"io"
 	"os"
 )
 
@@ -15,6 +17,15 @@ type DefaultPersister struct {
 }
 
 func (p *DefaultPersister) Load() (map[string]Item, error) {
+	if _, err := os.Stat(p.PersistFilePath); errors.Is(err, os.ErrNotExist) {
+		if w, err := os.Create(p.PersistFilePath); err != nil {
+			return nil, err
+		} else {
+			w.Close()
+			return make(map[string]Item), nil
+		}
+	}
+
 	r, err := os.Open(p.PersistFilePath)
 	if err != nil {
 		return nil, err
@@ -25,6 +36,9 @@ func (p *DefaultPersister) Load() (map[string]Item, error) {
 	items := make(map[string]Item)
 
 	if err := dec.Decode(&items); err != nil {
+		if errors.Is(err, io.EOF) {
+			return make(map[string]Item), nil
+		}
 		return nil, err
 	}
 
@@ -48,5 +62,6 @@ func (p *DefaultPersister) Save(items map[string]Item) error {
 	for _, item := range items {
 		gob.Register(item.Object)
 	}
+
 	return enc.Encode(&items)
 }
