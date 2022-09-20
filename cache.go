@@ -2,7 +2,6 @@ package gcache
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -39,21 +38,31 @@ type Cache interface {
 }
 
 type cache struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	mtx     sync.RWMutex
-	items   map[string]Item
-	changed bool
-	w       watcher
+	ctx       context.Context
+	cancel    context.CancelFunc
+	mtx       sync.RWMutex
+	items     map[string]Item
+	changed   bool
+	w         watcher
+	persister Persister
 }
 
-func New(ctx context.Context, cleanupInterval, persistInterval time.Duration, persistFilePath string) Cache {
+func New(ctx context.Context, cleanupInterval, persistInterval time.Duration, persister Persister) Cache {
 	var c cache
 	c.ctx, c.cancel = context.WithCancel(ctx)
 	c.items = make(map[string]Item)
 	c.changed = false
 	c.w.cleanupInterval = cleanupInterval
 	c.w.persistInterval = persistInterval
+	c.persister = persister
+
+	if persister != nil {
+		if items, err := persister.Load(); err != nil {
+			return nil
+		} else {
+			c.items = items
+		}
+	}
 
 	go c.w.Run(c.ctx, &c)
 
@@ -78,14 +87,23 @@ func (c *cache) cleanup() {
 }
 
 func (c *cache) persist() {
-	c.mtx.Lock()
-	if c.changed {
-		fmt.Println("not implemented")
-
-		c.changed = false
+	if c.persister == nil {
+		return
 	}
 
+	items := make(map[string]Item)
+	c.mtx.Lock()
+	if c.changed {
+		for key, item := range c.items {
+			if !item.expired() {
+				items[key] = item
+			}
+		}
+		c.changed = false
+	}
 	c.mtx.Unlock()
+
+	c.persister.Save(items)
 }
 
 func (c *cache) Exists(key string) bool {
