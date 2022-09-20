@@ -8,6 +8,10 @@ type NumType interface {
 		uint | uint8 | uint16 | uint32 | uint64
 }
 
+type ScalarType interface {
+	string | bool | NumType
+}
+
 type SliceType interface {
 	[]string | []bool |
 		[]float32 | []float64 |
@@ -16,7 +20,7 @@ type SliceType interface {
 }
 
 type ValType interface {
-	string | bool | NumType | SliceType
+	ScalarType | SliceType
 }
 
 func Exists(c Cache, key string) bool {
@@ -119,6 +123,40 @@ func Dec[T NumType](c Cache, key string, val T) (T, error) {
 	cc.changed = true
 
 	return newV, nil
+}
+
+func Append[T ScalarType](c Cache, key string, val T) ([]T, error) {
+	var item Item
+	var exists bool
+	cc := c.(*cache)
+
+	cc.mtx.Lock()
+	defer cc.mtx.Unlock()
+
+	item, exists = cc.persistItems[key]
+	if !exists {
+		item, exists = cc.volatileItems[key]
+		if !exists || item.expired() {
+			return nil, ErrNotExists
+		}
+	}
+
+	oldVal, ok := item.Object.([]T)
+	if !ok {
+		return nil, ErrInvalidType
+	}
+
+	newVal := append(oldVal, val)
+	item.Object = newVal
+
+	if item.ExpireAt == gNoExpiration {
+		cc.persistItems[key] = item
+	} else {
+		cc.volatileItems[key] = item
+	}
+	cc.changed = true
+
+	return newVal, nil
 }
 
 func TotalItems(c Cache) int {
