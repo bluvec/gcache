@@ -9,8 +9,8 @@ import (
 
 const (
 	NO_EXPIRATION            time.Duration = -1
-	DEFAULT_CLEANUP_INTERVAL time.Duration = time.Minute * 2
-	DEFAULT_PERSIST_INTERVAL time.Duration = time.Minute * 5
+	DEFAULT_CLEANUP_INTERVAL time.Duration = time.Minute * 5
+	DEFAULT_PERSIST_INTERVAL time.Duration = time.Minute * 2
 )
 
 var (
