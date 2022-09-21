@@ -40,7 +40,7 @@ func TestPersist(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	persister := &DefaultPersister{PersistFilePath: "persist.bin"}
+	persister := &FilePersister{FilePath: "persist.bin"}
 	c, err := New(ctx, time.Second*2, time.Second*3, persister)
 	if err != nil {
 		t.Error("create cache error:", err)

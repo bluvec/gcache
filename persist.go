@@ -11,8 +11,8 @@ type Persister interface {
 	Save(items map[string]Item) error
 }
 
-type DefaultPersister struct {
-	PersistFilePath string
+type FilePersister struct {
+	FilePath string
 }
 
 func init() {
@@ -47,11 +47,11 @@ func init() {
 	gob.Register([]float64{})
 }
 
-func (p *DefaultPersister) Load() (map[string]Item, error) {
-	r, err := os.Open(p.PersistFilePath)
+func (p *FilePersister) Load() (map[string]Item, error) {
+	r, err := os.Open(p.FilePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			if w, err := os.Create(p.PersistFilePath); err != nil {
+			if w, err := os.Create(p.FilePath); err != nil {
 				return nil, err
 			} else {
 				w.Close()
@@ -75,8 +75,8 @@ func (p *DefaultPersister) Load() (map[string]Item, error) {
 	return items, nil
 }
 
-func (p *DefaultPersister) Save(items map[string]Item) error {
-	w, err := os.Create(p.PersistFilePath)
+func (p *FilePersister) Save(items map[string]Item) error {
+	w, err := os.Create(p.FilePath)
 	if err != nil {
 		return err
 	}
