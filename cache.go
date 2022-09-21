@@ -112,7 +112,7 @@ func (c *Cache) Exists(key string) bool {
 	return exists && !item.expired()
 }
 
-func (c *Cache) Get(key string) (interface{}, error) {
+func (c *Cache) Get(key string) (any, error) {
 	var item Item
 	var exists bool
 
@@ -154,7 +154,7 @@ func (c *Cache) GetTTL(key string) (time.Duration, error) {
 	}
 }
 
-func (c *Cache) Set(key string, val interface{}, ttl time.Duration) {
+func (c *Cache) Set(key string, val any, ttl time.Duration) {
 	var expireAt time.Time
 	if ttl == NO_EXPIRATION {
 		expireAt = gNoExpiration
