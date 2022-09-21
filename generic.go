@@ -23,11 +23,11 @@ type ValType interface {
 	ScalarType | SliceType
 }
 
-func Exists(c Cache, key string) bool {
+func Exists(c *Cache, key string) bool {
 	return c.Exists(key)
 }
 
-func Get[T ValType](c Cache, key string) (T, error) {
+func Get[T ValType](c *Cache, key string) (T, error) {
 	var retV T
 
 	val, err := c.Get(key)
@@ -43,30 +43,29 @@ func Get[T ValType](c Cache, key string) (T, error) {
 	return v, nil
 }
 
-func GetTTL(c Cache, key string) (time.Duration, error) {
+func GetTTL(c *Cache, key string) (time.Duration, error) {
 	return c.GetTTL(key)
 }
 
-func Set[T ValType](c Cache, key string, val T, ttl time.Duration) {
+func Set[T ValType](c *Cache, key string, val T, ttl time.Duration) {
 	c.Set(key, val, ttl)
 }
 
-func Del(c Cache, key string) {
+func Del(c *Cache, key string) {
 	c.Del(key)
 }
 
-func Inc[T NumType](c Cache, key string, val T) (T, error) {
+func Inc[T NumType](c *Cache, key string, val T) (T, error) {
 	var retVal T
 	var item Item
 	var exists bool
-	cc := c.(*cache)
 
-	cc.mtx.Lock()
-	defer cc.mtx.Unlock()
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
 
-	item, exists = cc.persistItems[key]
+	item, exists = c.persistItems[key]
 	if !exists {
-		item, exists = cc.volatileItems[key]
+		item, exists = c.volatileItems[key]
 		if !exists || item.expired() {
 			return retVal, ErrNotExists
 		}
@@ -81,27 +80,26 @@ func Inc[T NumType](c Cache, key string, val T) (T, error) {
 	item.Object = newV
 
 	if item.ExpireAt == gNoExpiration {
-		cc.persistItems[key] = item
+		c.persistItems[key] = item
 	} else {
-		cc.volatileItems[key] = item
+		c.volatileItems[key] = item
 	}
-	cc.changed = true
+	c.changed = true
 
 	return newV, nil
 }
 
-func Dec[T NumType](c Cache, key string, val T) (T, error) {
+func Dec[T NumType](c *Cache, key string, val T) (T, error) {
 	var retVal T
 	var item Item
 	var exists bool
-	cc := c.(*cache)
 
-	cc.mtx.Lock()
-	defer cc.mtx.Unlock()
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
 
-	item, exists = cc.persistItems[key]
+	item, exists = c.persistItems[key]
 	if !exists {
-		item, exists = cc.volatileItems[key]
+		item, exists = c.volatileItems[key]
 		if !exists || item.expired() {
 			return retVal, ErrNotExists
 		}
@@ -116,26 +114,25 @@ func Dec[T NumType](c Cache, key string, val T) (T, error) {
 	item.Object = newV
 
 	if item.ExpireAt == gNoExpiration {
-		cc.persistItems[key] = item
+		c.persistItems[key] = item
 	} else {
-		cc.volatileItems[key] = item
+		c.volatileItems[key] = item
 	}
-	cc.changed = true
+	c.changed = true
 
 	return newV, nil
 }
 
-func Append[T ScalarType](c Cache, key string, val T) ([]T, error) {
+func Append[T ScalarType](c *Cache, key string, val T) ([]T, error) {
 	var item Item
 	var exists bool
-	cc := c.(*cache)
 
-	cc.mtx.Lock()
-	defer cc.mtx.Unlock()
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
 
-	item, exists = cc.persistItems[key]
+	item, exists = c.persistItems[key]
 	if !exists {
-		item, exists = cc.volatileItems[key]
+		item, exists = c.volatileItems[key]
 		if !exists || item.expired() {
 			return nil, ErrNotExists
 		}
@@ -150,19 +147,21 @@ func Append[T ScalarType](c Cache, key string, val T) ([]T, error) {
 	item.Object = newVal
 
 	if item.ExpireAt == gNoExpiration {
-		cc.persistItems[key] = item
+		c.persistItems[key] = item
 	} else {
-		cc.volatileItems[key] = item
+		c.volatileItems[key] = item
 	}
-	cc.changed = true
+	c.changed = true
 
 	return newVal, nil
 }
 
-func TotalItems(c Cache) int {
+// could all items which may include the expired items
+func TotalItems(c *Cache) int {
 	return c.TotalItems()
 }
 
-func TotalValidItems(c Cache) int {
+// count only unexpired items, more expensive than TotalItems
+func TotalValidItems(c *Cache) int {
 	return c.TotalValidItems()
 }

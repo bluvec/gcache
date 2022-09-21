@@ -10,7 +10,7 @@ type watcher struct {
 	persistInterval time.Duration
 }
 
-func (w *watcher) Run(ctx context.Context, c *cache) {
+func (w *watcher) Run(ctx context.Context, c *Cache) {
 	cleanupTicker := time.NewTicker(w.cleanupInterval)
 	defer cleanupTicker.Stop()
 

@@ -15,21 +15,7 @@ var (
 	gNoExpiration = time.Unix(math.MaxInt64, 0)
 )
 
-type Cache interface {
-	Exists(key string) bool
-
-	Get(key string) (interface{}, error)
-	GetTTL(key string) (time.Duration, error)
-	Set(key string, val interface{}, ttl time.Duration)
-	Del(key string)
-	Inc(key string, val interface{}) (interface{}, error)
-	Dec(key string, val interface{}) (interface{}, error)
-
-	TotalItems() int      // may include the expired items not cleaned up
-	TotalValidItems() int // expensive
-}
-
-type cache struct {
+type Cache struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	mtx           sync.RWMutex
@@ -40,8 +26,9 @@ type cache struct {
 	persister     Persister
 }
 
-func New(ctx context.Context, cleanupInterval, persistInterval time.Duration, persister Persister) (Cache, error) {
-	var c cache
+func New(ctx context.Context, cleanupInterval, persistInterval time.Duration, persister Persister) (*Cache, error) {
+	c := new(Cache)
+
 	c.ctx, c.cancel = context.WithCancel(ctx)
 	c.persistItems = make(map[string]Item)
 	c.volatileItems = make(map[string]Item)
@@ -64,17 +51,17 @@ func New(ctx context.Context, cleanupInterval, persistInterval time.Duration, pe
 		}
 	}
 
-	go c.w.Run(c.ctx, &c)
+	go c.w.Run(c.ctx, c)
 
-	return &c, nil
+	return c, nil
 }
 
-func (c *cache) Close() error {
+func (c *Cache) Close() error {
 	c.cancel()
 	return nil
 }
 
-func (c *cache) cleanup() {
+func (c *Cache) cleanup() {
 	c.mtx.Lock()
 	now := time.Now()
 	for key, item := range c.volatileItems {
@@ -86,7 +73,7 @@ func (c *cache) cleanup() {
 	c.mtx.Unlock()
 }
 
-func (c *cache) persist() {
+func (c *Cache) persist() {
 	if c.persister == nil {
 		return
 	}
@@ -110,7 +97,7 @@ func (c *cache) persist() {
 	c.persister.Save(items)
 }
 
-func (c *cache) Exists(key string) bool {
+func (c *Cache) Exists(key string) bool {
 	c.mtx.RLock()
 	defer c.mtx.RUnlock()
 
@@ -123,7 +110,7 @@ func (c *cache) Exists(key string) bool {
 	return exists && !item.expired()
 }
 
-func (c *cache) Get(key string) (interface{}, error) {
+func (c *Cache) Get(key string) (interface{}, error) {
 	var item Item
 	var exists bool
 
@@ -143,7 +130,7 @@ func (c *cache) Get(key string) (interface{}, error) {
 	return item.Object, nil
 }
 
-func (c *cache) GetTTL(key string) (time.Duration, error) {
+func (c *Cache) GetTTL(key string) (time.Duration, error) {
 	c.mtx.RLock()
 	defer c.mtx.RUnlock()
 
@@ -165,7 +152,7 @@ func (c *cache) GetTTL(key string) (time.Duration, error) {
 	}
 }
 
-func (c *cache) Set(key string, val interface{}, ttl time.Duration) {
+func (c *Cache) Set(key string, val interface{}, ttl time.Duration) {
 	var expireAt time.Time
 	if ttl == NO_EXPIRATION {
 		expireAt = gNoExpiration
@@ -191,7 +178,7 @@ func (c *cache) Set(key string, val interface{}, ttl time.Duration) {
 	c.mtx.Unlock()
 }
 
-func (c *cache) Del(key string) {
+func (c *Cache) Del(key string) {
 	c.mtx.Lock()
 	if _, existed := c.persistItems[key]; existed {
 		delete(c.persistItems, key)
@@ -203,7 +190,7 @@ func (c *cache) Del(key string) {
 	c.mtx.Unlock()
 }
 
-func (c *cache) Inc(key string, val interface{}) (interface{}, error) {
+func (c *Cache) Inc(key string, val interface{}) (interface{}, error) {
 	var item Item
 	var exists bool
 
@@ -306,7 +293,7 @@ func (c *cache) Inc(key string, val interface{}) (interface{}, error) {
 	return item.Object, nil
 }
 
-func (c *cache) Dec(key string, val interface{}) (interface{}, error) {
+func (c *Cache) Dec(key string, val interface{}) (interface{}, error) {
 	var item Item
 	var exists bool
 
@@ -409,7 +396,7 @@ func (c *cache) Dec(key string, val interface{}) (interface{}, error) {
 	return item.Object, nil
 }
 
-func (c *cache) TotalItems() int {
+func (c *Cache) TotalItems() int {
 	c.mtx.RLock()
 	n1 := len(c.persistItems)
 	n2 := len(c.volatileItems)
@@ -418,7 +405,7 @@ func (c *cache) TotalItems() int {
 	return n1 + n2
 }
 
-func (c *cache) TotalValidItems() int {
+func (c *Cache) TotalValidItems() int {
 	c.mtx.RLock()
 	n1 := len(c.persistItems)
 
