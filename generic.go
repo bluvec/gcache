@@ -206,7 +206,7 @@ func Set[T ValType](c *Cache, key string, val T, ttl time.Duration) {
 	c.mtx.Unlock()
 }
 
-func Del(c *Cache, key string) {
+func Delete(c *Cache, key string) {
 	c.mtx.Lock()
 	if _, existed := c.persistItems[key]; existed {
 		delete(c.persistItems, key)
@@ -218,7 +218,7 @@ func Del(c *Cache, key string) {
 	c.mtx.Unlock()
 }
 
-func DelKeys(c *Cache, keys []string) {
+func DeleteKeys(c *Cache, keys []string) {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
 
@@ -228,7 +228,7 @@ func DelKeys(c *Cache, keys []string) {
 	}
 }
 
-func Inc[T NumType](c *Cache, key string, val T) (T, error) {
+func Increase[T NumType](c *Cache, key string, val T) (T, error) {
 	var retVal T
 	var item Item
 	var exists bool
@@ -262,7 +262,7 @@ func Inc[T NumType](c *Cache, key string, val T) (T, error) {
 	return newV, nil
 }
 
-func Dec[T NumType](c *Cache, key string, val T) (T, error) {
+func Decrease[T NumType](c *Cache, key string, val T) (T, error) {
 	var retVal T
 	var item Item
 	var exists bool
@@ -296,8 +296,8 @@ func Dec[T NumType](c *Cache, key string, val T) (T, error) {
 	return newV, nil
 }
 
-// Append scalar to a slice cache
-func Append[T ScalarType](c *Cache, key string, val T) ([]T, error) {
+// Append scalar to an existing slice cache
+func AppendToSlice[T ScalarType](c *Cache, key string, val T) error {
 	var item Item
 	var exists bool
 
@@ -308,17 +308,16 @@ func Append[T ScalarType](c *Cache, key string, val T) ([]T, error) {
 	if !exists {
 		item, exists = c.volatileItems[key]
 		if !exists || item.expired() {
-			return nil, ErrNotExists
+			return ErrNotExists
 		}
 	}
 
-	oldVal, ok := item.Object.([]T)
+	valSlice, ok := item.Object.([]T)
 	if !ok {
-		return nil, ErrInvalidType
+		return ErrInvalidType
 	}
-
-	newVal := append(oldVal, val)
-	item.Object = newVal
+	valSlice = append(valSlice, val)
+	item.Object = valSlice
 
 	if item.neverExpire() {
 		c.persistItems[key] = item
@@ -327,7 +326,64 @@ func Append[T ScalarType](c *Cache, key string, val T) ([]T, error) {
 	}
 	c.changed = true
 
-	return newVal, nil
+	return nil
+}
+
+// Insert scalar to an existing map cache
+func InsertToMap[T ScalarType](c *Cache, key string, name string, val T) error {
+	var item Item
+	var exists bool
+
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	item, exists = c.persistItems[key]
+	if !exists {
+		item, exists = c.volatileItems[key]
+		if !exists || item.expired() {
+			return ErrNotExists
+		}
+	}
+
+	valMap, ok := item.Object.(map[string]T)
+	if !ok {
+		return ErrInvalidType
+	}
+	valMap[name] = val
+
+	if item.neverExpire() {
+		c.persistItems[key] = item
+	} else {
+		c.volatileItems[key] = item
+	}
+	c.changed = true
+
+	return nil
+}
+
+// Delete value from an existing map
+func DeleteFromMap[T ScalarType](c *Cache, key string, name string) error {
+	var item Item
+	var exists bool
+
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	item, exists = c.persistItems[key]
+	if !exists {
+		item, exists = c.volatileItems[key]
+		if !exists || item.expired() {
+			return ErrNotExists
+		}
+	}
+
+	valMap, ok := item.Object.(map[string]T)
+	if !ok {
+		return ErrInvalidType
+	}
+	delete(valMap, name)
+
+	return nil
 }
 
 func Keys(c *Cache) []string {
