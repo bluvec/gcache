@@ -49,12 +49,12 @@ func TestPersist(t *testing.T) {
 
 	Set(c, "k1", "v1", time.Second*100)
 	Set(c, "k2", true, time.Second*100)
-	Set(c, "k3", int8(-1), NO_EXPIRATION)
-	Set(c, "k4", uint8(1), NO_EXPIRATION)
-	Set(c, "k5", int(-2), NO_EXPIRATION)
-	Set(c, "k6", uint(2), NO_EXPIRATION)
-	Set(c, "k7", float32(1.0), NO_EXPIRATION)
-	Set(c, "k8", []string{"a", "b"}, NO_EXPIRATION)
+	Set(c, "k3", int8(-1), NEVER_EXPIRE)
+	Set(c, "k4", uint8(1), NEVER_EXPIRE)
+	Set(c, "k5", int(-2), NEVER_EXPIRE)
+	Set(c, "k6", uint(2), NEVER_EXPIRE)
+	Set(c, "k7", float32(1.0), NEVER_EXPIRE)
+	Set(c, "k8", []string{"a", "b"}, NEVER_EXPIRE)
 	Set(c, "k9", []int{1, 2, 3}, time.Second*100)
 
 	totalItems := TotalItems(c)

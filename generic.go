@@ -79,7 +79,7 @@ func Inc[T NumType](c *Cache, key string, val T) (T, error) {
 	newV := oldV + val
 	item.Object = newV
 
-	if item.ExpireAt == gNoExpiration {
+	if item.neverExpire() {
 		c.persistItems[key] = item
 	} else {
 		c.volatileItems[key] = item
@@ -113,7 +113,7 @@ func Dec[T NumType](c *Cache, key string, val T) (T, error) {
 	newV := oldV - val
 	item.Object = newV
 
-	if item.ExpireAt == gNoExpiration {
+	if item.neverExpire() {
 		c.persistItems[key] = item
 	} else {
 		c.volatileItems[key] = item
@@ -146,7 +146,7 @@ func Append[T ScalarType](c *Cache, key string, val T) ([]T, error) {
 	newVal := append(oldVal, val)
 	item.Object = newVal
 
-	if item.ExpireAt == gNoExpiration {
+	if item.neverExpire() {
 		c.persistItems[key] = item
 	} else {
 		c.volatileItems[key] = item

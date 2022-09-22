@@ -1,12 +1,23 @@
 package gcache
 
-import "time"
+import (
+	"math"
+	"time"
+)
+
+const (
+	kNeverExpireMs int64 = math.MaxInt64
+)
 
 type Item struct {
 	Object   interface{}
-	ExpireAt time.Time // expiration time, never expire if equals to 0
+	ExpireMs int64 // expiration time in ms, never expire if equals to `kNoExpiration`
 }
 
 func (item *Item) expired() bool {
-	return time.Now().After(item.ExpireAt)
+	return time.Now().UnixMilli() > item.ExpireMs
+}
+
+func (item *Item) neverExpire() bool {
+	return item.ExpireMs == kNeverExpireMs
 }
