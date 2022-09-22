@@ -2,19 +2,14 @@ package gcache
 
 import (
 	"context"
-	"math"
 	"sync"
 	"time"
 )
 
 const (
-	NO_EXPIRATION            time.Duration = -1
+	NEVER_EXPIRE             time.Duration = -1
 	DEFAULT_CLEANUP_INTERVAL time.Duration = time.Minute * 5
 	DEFAULT_PERSIST_INTERVAL time.Duration = time.Minute * 2
-)
-
-var (
-	gNoExpiration = time.Unix(math.MaxInt64, 0)
 )
 
 type Cache struct {
@@ -44,7 +39,7 @@ func New(ctx context.Context, cleanupInterval, persistInterval time.Duration, pe
 			return nil, err
 		} else {
 			for key, item := range items {
-				if item.ExpireAt == gNoExpiration {
+				if item.neverExpire() {
 					c.persistItems[key] = item
 				} else {
 					c.volatileItems[key] = item
@@ -64,10 +59,10 @@ func (c *Cache) Close() error {
 }
 
 func (c *Cache) cleanup() {
+	nowMs := time.Now().UnixMilli()
 	c.mtx.Lock()
-	now := time.Now()
 	for key, item := range c.volatileItems {
-		if now.After(item.ExpireAt) {
+		if nowMs > item.ExpireMs {
 			delete(c.volatileItems, key)
 			c.changed = true
 		}
@@ -80,9 +75,12 @@ func (c *Cache) persist() {
 		return
 	}
 
+	changed := false
 	items := make(map[string]Item)
 	c.mtx.RLock()
 	if c.changed {
+		changed = true
+
 		for key, item := range c.persistItems {
 			items[key] = item
 		}
@@ -96,7 +94,9 @@ func (c *Cache) persist() {
 	}
 	c.mtx.RUnlock()
 
-	c.persister.Save(items)
+	if changed {
+		c.persister.Save(items)
+	}
 }
 
 func (c *Cache) Exists(key string) bool {
@@ -138,7 +138,7 @@ func (c *Cache) GetTTL(key string) (time.Duration, error) {
 
 	item, exists := c.persistItems[key]
 	if exists {
-		return NO_EXPIRATION, nil
+		return NEVER_EXPIRE, nil
 	}
 
 	item, exists = c.volatileItems[key]
@@ -146,34 +146,27 @@ func (c *Cache) GetTTL(key string) (time.Duration, error) {
 		return 0, ErrNotExists
 	}
 
-	ttl := time.Until(item.ExpireAt)
-	if ttl < 0 {
+	nowMs := time.Now().UnixMilli()
+	if item.ExpireMs < nowMs {
 		return 0, ErrNotExists
 	} else {
-		return ttl, nil
+		return time.Duration(item.ExpireMs-nowMs) * time.Millisecond, nil
 	}
 }
 
 func (c *Cache) Set(key string, val any, ttl time.Duration) {
-	var expireAt time.Time
-	if ttl == NO_EXPIRATION {
-		expireAt = gNoExpiration
-	} else {
-		expireAt = time.Now().Add(ttl)
-	}
-
 	c.mtx.Lock()
-	if ttl == NO_EXPIRATION {
+	if ttl == NEVER_EXPIRE {
 		delete(c.volatileItems, key)
 		c.persistItems[key] = Item{
 			Object:   val,
-			ExpireAt: expireAt,
+			ExpireMs: kNeverExpireMs,
 		}
 	} else {
 		delete(c.persistItems, key)
 		c.volatileItems[key] = Item{
 			Object:   val,
-			ExpireAt: expireAt,
+			ExpireMs: time.Now().Add(ttl).UnixMilli(),
 		}
 	}
 	c.changed = true
@@ -205,10 +198,9 @@ func (c *Cache) TotalValidItems() int {
 	c.mtx.RLock()
 	n1 := len(c.persistItems)
 
-	now := time.Now()
 	n2 := 0
 	for _, item := range c.volatileItems {
-		if now.Before(item.ExpireAt) {
+		if !item.expired() {
 			n2++
 		}
 	}
