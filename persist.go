@@ -16,6 +16,7 @@ type FilePersister struct {
 }
 
 func init() {
+	// Scalar types
 	gob.Register(string(""))
 	gob.Register(bool(false))
 	gob.Register(int(0))
@@ -31,6 +32,7 @@ func init() {
 	gob.Register(float32(0))
 	gob.Register(float64(0))
 
+	// Slice types
 	gob.Register([]string{})
 	gob.Register([]bool{})
 	gob.Register([]int{})
@@ -45,6 +47,23 @@ func init() {
 	gob.Register([]uint64{})
 	gob.Register([]float32{})
 	gob.Register([]float64{})
+
+	// Map types
+	gob.Register(map[string]string{})
+	gob.Register(map[string]bool{})
+	gob.Register(map[string]int{})
+	gob.Register(map[string]uint{})
+	gob.Register(map[string]int8{})
+	gob.Register(map[string]uint8{})
+	gob.Register(map[string]int16{})
+	gob.Register(map[string]uint16{})
+	gob.Register(map[string]int32{})
+	gob.Register(map[string]uint32{})
+	gob.Register(map[string]int64{})
+	gob.Register(map[string]uint64{})
+	gob.Register(map[string]float32{})
+	gob.Register(map[string]float64{})
+
 }
 
 func (p *FilePersister) Load() (map[string]Item, error) {

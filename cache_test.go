@@ -57,7 +57,7 @@ func TestPersist(t *testing.T) {
 	Set(c, "k8", []string{"a", "b"}, NEVER_EXPIRE)
 	Set(c, "k9", []int{1, 2, 3}, time.Second*100)
 
-	totalItems := TotalItems(c)
+	totalItems := Len(c)
 	if totalItems != 9 {
 		t.Error("invalid number of items")
 		return
