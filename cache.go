@@ -20,6 +20,7 @@ type Cache struct {
 	volatileItems map[string]Item
 	changed       bool
 	w             watcher
+	wg            sync.WaitGroup
 	persister     Persister
 }
 
@@ -48,13 +49,15 @@ func New(ctx context.Context, cleanupInterval, persistInterval time.Duration, pe
 		}
 	}
 
-	go c.w.Run(c.ctx, c)
+	c.wg.Add(1)
+	go c.w.Run(c.ctx, &c.wg, c.persister, c.cleanup, c.persist)
 
 	return c, nil
 }
 
 func (c *Cache) Close() error {
 	c.cancel()
+	c.wg.Wait()
 	return nil
 }
 

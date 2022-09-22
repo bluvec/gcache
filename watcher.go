@@ -2,6 +2,7 @@ package gcache
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
@@ -10,19 +11,22 @@ type watcher struct {
 	persistInterval time.Duration
 }
 
-func (w *watcher) Run(ctx context.Context, c *Cache) {
+func (w *watcher) Run(ctx context.Context, wg *sync.WaitGroup,
+	persister Persister, cleanup func(), persist func()) {
+	defer wg.Done()
+	defer persist()
+
 	cleanupTicker := time.NewTicker(w.cleanupInterval)
 	defer cleanupTicker.Stop()
 
-	if c.persister == nil {
+	if persister == nil {
 		for {
 			select {
 			case <-ctx.Done():
-				c.persist()
 				return
 
 			case <-cleanupTicker.C:
-				c.cleanup()
+				cleanup()
 			}
 		}
 	} else {
@@ -32,14 +36,13 @@ func (w *watcher) Run(ctx context.Context, c *Cache) {
 		for {
 			select {
 			case <-ctx.Done():
-				c.persist()
 				return
 
 			case <-cleanupTicker.C:
-				c.cleanup()
+				cleanup()
 
 			case <-persistTicker.C:
-				c.persist()
+				persist()
 			}
 		}
 	}
